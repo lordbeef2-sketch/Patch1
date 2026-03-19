@@ -5,11 +5,14 @@ import json
 import re
 import zipfile
 import copy
+import os
 from datetime import datetime, timezone
 from pathlib import Path as StdlibPath
 from typing import Annotated
+from urllib.parse import quote, urljoin
 from uuid import UUID
 
+import httpx
 import orjson
 from aiofile import async_open
 from anyio import Path
@@ -54,6 +57,120 @@ from langflow.utils.compression import compress_response
 router = APIRouter(prefix="/flows", tags=["Flows"])
 
 SHARE_TAG_PREFIX = "shared:user:"
+
+
+def _is_truthy(value: str | None, default: bool = False) -> bool:
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _owui_sync_config() -> tuple[str, str] | None:
+    if not _is_truthy(os.getenv("OWUI_AUTO_MODEL_SYNC"), default=True):
+        return None
+
+    base_url = (os.getenv("OPENWEBUI_BASE_URL") or os.getenv("OLLAMA_BASE_URL") or "").strip()
+    api_key = (os.getenv("OPENWEBUI_API_KEY") or os.getenv("OLLAMA_API_KEY") or "").strip()
+    if not base_url or not api_key:
+        return None
+    return base_url.rstrip("/"), api_key
+
+
+def _render_template(template: str, flow: Flow) -> str:
+    endpoint_name = flow.endpoint_name or ""
+    flow_name = flow.name or ""
+    return template.format(
+        flow_id=str(flow.id),
+        endpoint_name=endpoint_name,
+        flow_name=flow_name,
+        user_id=str(flow.user_id) if flow.user_id else "",
+    )
+
+
+def _build_owui_model_form(flow: Flow) -> dict:
+    model_id_template = os.getenv("OWUI_SYNC_MODEL_ID_TEMPLATE", "langflow-flow-{flow_id}")
+    base_model_template = os.getenv("OWUI_SYNC_BASE_MODEL_TEMPLATE", "{flow_id}")
+    fixed_base_model_id = os.getenv("OWUI_SYNC_BASE_MODEL_ID")
+
+    model_id = _render_template(model_id_template, flow)
+    base_model_id = (fixed_base_model_id or _render_template(base_model_template, flow)).strip()
+    if not model_id or not base_model_id:
+        raise ValueError("Generated OWUI model mapping contains empty model_id or base_model_id")
+
+    return {
+        "id": model_id,
+        "name": flow.name,
+        "base_model_id": base_model_id,
+        "meta": {
+            "description": f"Langflow flow: {flow.name}",
+            "langflow_flow_id": str(flow.id),
+            "langflow_endpoint_name": flow.endpoint_name,
+            "tags": [{"name": "langflow"}, {"name": "flow"}],
+        },
+        "params": {
+            "langflow_flow_id": str(flow.id),
+            "langflow_endpoint_name": flow.endpoint_name,
+        },
+        "is_active": True,
+    }
+
+
+async def _upsert_flow_model_in_owui(flow: Flow) -> None:
+    config = _owui_sync_config()
+    if config is None:
+        return
+
+    base_url, api_key = config
+    model_form = _build_owui_model_form(flow)
+    model_id = model_form["id"]
+
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    model_lookup_url = urljoin(f"{base_url}/", f"api/v1/models/model?id={quote(model_id, safe='')}")
+    create_url = urljoin(f"{base_url}/", "api/v1/models/create")
+    update_url = urljoin(f"{base_url}/", "api/v1/models/model/update")
+
+    try:
+        async with httpx.AsyncClient(timeout=15, trust_env=True) as client:
+            response = await client.get(model_lookup_url, headers=headers)
+            exists = response.status_code == 200
+            target_url = update_url if exists else create_url
+            write_response = await client.post(target_url, headers=headers, json=model_form)
+            write_response.raise_for_status()
+    except Exception:
+        await logger.awarning(
+            "Failed to sync flow %s to OpenWebUI model mapping (model_id=%s)",
+            flow.id,
+            model_id,
+            exc_info=True,
+        )
+
+
+async def _delete_flow_model_in_owui(flow: Flow) -> None:
+    config = _owui_sync_config()
+    if config is None:
+        return
+
+    base_url, api_key = config
+    model_id_template = os.getenv("OWUI_SYNC_MODEL_ID_TEMPLATE", "langflow-flow-{flow_id}")
+    model_id = _render_template(model_id_template, flow)
+    if not model_id:
+        return
+
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    delete_url = urljoin(f"{base_url}/", "api/v1/models/model/delete")
+
+    try:
+        async with httpx.AsyncClient(timeout=15, trust_env=True) as client:
+            response = await client.post(delete_url, headers=headers, json={"id": model_id})
+            if response.status_code not in (200, 401, 404):
+                response.raise_for_status()
+    except Exception:
+        await logger.awarning(
+            "Failed to delete OpenWebUI model mapping for flow %s (model_id=%s)",
+            flow.id,
+            model_id,
+            exc_info=True,
+        )
 
 
 def _get_shared_user_ids_from_flow(flow: Flow) -> set[str]:
@@ -337,6 +454,7 @@ async def _new_flow(
             user_id=user_id,
             description="Auto-snapshot on create",
         )
+        await _upsert_flow_model_in_owui(db_flow)
 
         # Convert to FlowRead while session is still active
         return FlowRead.model_validate(db_flow, from_attributes=True)
@@ -696,6 +814,7 @@ async def update_flow(
             user_id=current_user.id,
             description="Auto-snapshot on save",
         )
+        await _upsert_flow_model_in_owui(db_flow)
 
         # Convert to FlowRead while session is still active to avoid detached instance errors
         flow_read = FlowRead.model_validate(db_flow, from_attributes=True)
@@ -875,6 +994,7 @@ async def _update_existing_flow(
         user_id=user_id,
         description="Auto-snapshot on save",
     )
+    await _upsert_flow_model_in_owui(existing_flow)
 
     return FlowRead.model_validate(existing_flow, from_attributes=True)
 
@@ -894,6 +1014,7 @@ async def delete_flow(
     )
     if not flow:
         raise HTTPException(status_code=404, detail="Flow not found")
+    await _delete_flow_model_in_owui(flow)
     await cascade_delete_flow(session, flow.id)
     return {"message": "Flow deleted successfully"}
 
@@ -922,6 +1043,7 @@ async def create_flows(
             user_id=current_user.id,
             description="Auto-snapshot on create",
         )
+        await _upsert_flow_model_in_owui(db_flow)
 
     return [FlowRead.model_validate(db_flow, from_attributes=True) for db_flow in db_flows]
 
