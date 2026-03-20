@@ -13,8 +13,9 @@ PATCH_ID = "owui-admin-console-v1"
 BRAND_NAME = "IMCE AI Interface Aide"
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-PAYLOAD_DIR = SCRIPT_DIR / "payload"
-BACKUPS_DIR = SCRIPT_DIR / "backups"
+PATCHER_ROOT = SCRIPT_DIR.parent
+PAYLOAD_DIR = PATCHER_ROOT / "payload"
+BACKUPS_DIR = PATCHER_ROOT / "backups"
 
 
 def _die(msg: str, code: int = 2) -> None:
@@ -77,7 +78,7 @@ def _find_open_webui_dir(open_webui_dir: str | None, site_packages: str | None) 
 
     # Fallback: if this patcher folder is copied next to a Python env,
     # detect common site-packages layouts without relying on active interpreter.
-    workspace_root = SCRIPT_DIR.parent
+    workspace_root = PATCHER_ROOT.parent
     fallback_candidates = [
         workspace_root / "Lib" / "site-packages" / "open_webui",  # Windows venv/conda
         workspace_root / "lib" / "site-packages" / "open_webui",  # Some Unix layouts

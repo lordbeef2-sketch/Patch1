@@ -1,4 +1,3 @@
-\
 $ErrorActionPreference = 'Stop'
 function Test-HasArg {
   param([object[]]$InputArgs,[string[]]$Names)

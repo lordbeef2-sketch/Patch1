@@ -1,4 +1,3 @@
-\
 param(
   [int]$Port = 8081,
   [switch]$ValidateOnly

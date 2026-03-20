@@ -1,3 +1,4 @@
+FILE_MANIFEST.txt
 README.md
 langflow/patcher/README.md
 langflow/patcher/install.bat

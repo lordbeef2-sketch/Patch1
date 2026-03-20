@@ -1,4 +1,3 @@
-\
 $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $envRoot = (Resolve-Path (Join-Path $here '..')).Path

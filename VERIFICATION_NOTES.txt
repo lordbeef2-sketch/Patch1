@@ -1,0 +1,9 @@
+Verification notes:
+- Fixed OWUI path bug in tools/patch_openwebui.py:
+  - payload now resolves to ../payload
+  - backups now resolve to ../backups
+  - fallback workspace root now resolves one level above patcher
+- Static audit result:
+  - Langflow installer paths are internally consistent for patcher one level below root.
+  - OWUI wrappers now align with the moved Python patcher under tools/.
+- Not runtime-tested against a live Langflow/OWUI install in this environment.

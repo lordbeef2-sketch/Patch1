@@ -1,4 +1,3 @@
-\
 $ErrorActionPreference = 'Stop'
 $PATCHER_ROOT = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ENV_ROOT = (Resolve-Path (Join-Path $PATCHER_ROOT '..')).Path
