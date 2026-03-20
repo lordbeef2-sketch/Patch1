@@ -18,7 +18,12 @@ from lfx.base.models.google_generative_ai_constants import (
     GOOGLE_GENERATIVE_AI_MODELS_DETAILED,
 )
 from lfx.base.models.model_metadata import MODEL_PROVIDER_METADATA, get_provider_param_mapping
-from lfx.base.models.model_utils import _to_str, replace_with_live_models
+from lfx.base.models.model_utils import (
+    _to_str,
+    get_ollama_base_url_candidates,
+    get_openwebui_api_key,
+    replace_with_live_models,
+)
 from lfx.base.models.ollama_constants import OLLAMA_EMBEDDING_MODELS_DETAILED, OLLAMA_MODELS_DETAILED
 from lfx.base.models.openai_constants import OPENAI_EMBEDDING_MODELS_DETAILED, OPENAI_MODELS_DETAILED
 from lfx.base.models.watsonx_constants import WATSONX_MODELS_DETAILED
@@ -720,30 +725,38 @@ def validate_model_provider_key(provider: str, variables: dict[str, str], model_
         elif provider == "Ollama":
             import requests
 
-            base_url = (
-                variables.get("OPENWEBUI_BASE_URL")
-                or variables.get("OLLAMA_BASE_URL")
-                or os.environ.get("OPENWEBUI_BASE_URL")
-                or os.environ.get("OLLAMA_BASE_URL")
-            )
-            if not base_url:
-                msg = "Invalid Ollama base URL"
-                logger.error(msg)
-                raise ValueError(msg)
+            explicit_base_url = variables.get("OPENWEBUI_BASE_URL") or variables.get("OLLAMA_BASE_URL")
+            base_url_candidates = []
+            if explicit_base_url:
+                base_url_candidates.append(explicit_base_url)
+            base_url_candidates.extend(get_ollama_base_url_candidates())
 
-            base_url = base_url.rstrip("/").removesuffix("/v1")
+            api_key = (
+                variables.get("OPENWEBUI_API_KEY")
+                or variables.get("OLLAMA_API_KEY")
+                or get_openwebui_api_key()
+            )
+            headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
 
             response = None
             data = None
-            for path in ("api/models", "openwebui/api/models"):
-                with contextlib.suppress(Exception):
-                    response = requests.get(f"{base_url}/{path}", timeout=5)
-                    response.raise_for_status()
-                    data = response.json()
+            last_url = None
+            for raw_base_url in base_url_candidates:
+                base_url = raw_base_url.rstrip("/").removesuffix("/v1")
+                for path in ("api/models", "openwebui/api/models"):
+                    with contextlib.suppress(Exception):
+                        last_url = f"{base_url}/{path}"
+                        response = requests.get(last_url, headers=headers, timeout=5)
+                        response.raise_for_status()
+                        data = response.json()
+                        break
+                if isinstance(data, dict) and isinstance(data.get("data"), list):
                     break
 
             if not isinstance(data, dict) or not isinstance(data.get("data"), list):
-                msg = "Invalid Ollama base URL"
+                msg = "Invalid Ollama/OpenWebUI base URL"
+                if last_url:
+                    msg = f"{msg}: {last_url}"
                 logger.error(msg)
                 raise ValueError(msg)
 

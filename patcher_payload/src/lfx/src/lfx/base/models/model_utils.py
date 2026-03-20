@@ -31,6 +31,10 @@ OPENWEBUI_MODELS_PATHS = (
     "api/models",
     "openwebui/api/models",
 )
+OPENWEBUI_NATIVE_FALLBACK_URLS = (
+    "http://localhost:8080",
+    "http://127.0.0.1:8080",
+)
 
 # Extract model names from metadata for fallback defaults
 WATSONX_DEFAULT_LLM_MODEL_NAMES = [m["name"] for m in WATSONX_LLM_METADATA]
@@ -108,7 +112,7 @@ def _filter_openwebui_model_names(models: list[dict[str, Any]]) -> list[str]:
     return sorted(set(non_ollama))
 
 
-async def get_openwebui_models(base_url_value: str) -> list[str]:
+async def get_openwebui_models(base_url_value: str, api_key: str | None = None) -> list[str]:
     """Fetch OpenWebUI-created models from OpenWebUI model endpoints."""
     transformed_url = transform_localhost_url(base_url_value)
     if not transformed_url:
@@ -116,7 +120,7 @@ async def get_openwebui_models(base_url_value: str) -> list[str]:
     base_url = _normalize_base_url(transformed_url)
     headers = None
 
-    openwebui_api_key = os.environ.get("OPENWEBUI_API_KEY") or os.environ.get("OLLAMA_API_KEY")
+    openwebui_api_key = api_key or os.environ.get("OPENWEBUI_API_KEY") or os.environ.get("OLLAMA_API_KEY")
     if openwebui_api_key and openwebui_api_key.strip():
         headers = {"Authorization": f"Bearer {openwebui_api_key}"}
 
@@ -384,6 +388,46 @@ def get_provider_variable_value(user_id: UUID | str | None, variable_key: str) -
     return run_until_complete(_get_variable())
 
 
+def get_openwebui_api_key(user_id: UUID | str | None = None) -> str | None:
+    """Resolve OpenWebUI/Ollama API key from user variables, then environment."""
+    for key in ("OPENWEBUI_API_KEY", "OLLAMA_API_KEY"):
+        value = get_provider_variable_value(user_id, key)
+        if value and value.strip():
+            return value.strip()
+
+    for key in ("OPENWEBUI_API_KEY", "OLLAMA_API_KEY"):
+        value = os.environ.get(key)
+        if value and value.strip():
+            return value.strip()
+
+    return None
+
+
+def get_ollama_base_url_candidates(user_id: UUID | str | None = None) -> list[str]:
+    """Return ordered candidate base URLs for OpenWebUI/Ollama model discovery."""
+    candidates = [
+        get_provider_variable_value(user_id, "OPENWEBUI_BASE_URL"),
+        get_provider_variable_value(user_id, "OLLAMA_BASE_URL"),
+        os.environ.get("OPENWEBUI_BASE_URL"),
+        os.environ.get("OLLAMA_BASE_URL"),
+        *OPENWEBUI_NATIVE_FALLBACK_URLS,
+        _get_langflow_server_base_url(),
+    ]
+
+    unique_candidates: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        if not candidate:
+            continue
+        normalized = candidate.strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        unique_candidates.append(normalized)
+
+    return unique_candidates
+
+
 def fetch_live_ollama_models(user_id: UUID | str | None, model_type: str = "llm") -> list[dict]:
     """Fetch live Ollama models from the configured Ollama instance.
 
@@ -394,39 +438,35 @@ def fetch_live_ollama_models(user_id: UUID | str | None, model_type: str = "llm"
     Returns:
         List of model metadata dicts, or empty list if unable to fetch
     """
-    # Prefer explicit OpenWebUI URL, then Ollama URL, then current Langflow server.
-    base_url = (
-        get_provider_variable_value(user_id, "OPENWEBUI_BASE_URL")
-        or get_provider_variable_value(user_id, "OLLAMA_BASE_URL")
-        or os.environ.get("OPENWEBUI_BASE_URL")
-        or os.environ.get("OLLAMA_BASE_URL")
-        or _get_langflow_server_base_url()
-    )
-    if not base_url:
-        return []
+    api_key = get_openwebui_api_key(user_id)
 
-    try:
-        if model_type == "llm":
-            model_names = run_until_complete(get_openwebui_models(base_url))
-        else:
-            # OpenWebUI custom model list is used for language models.
-            model_names = []
+    for base_url in get_ollama_base_url_candidates(user_id):
+        try:
+            if model_type == "llm":
+                model_names = run_until_complete(get_openwebui_models(base_url, api_key=api_key))
+            else:
+                # OpenWebUI custom model list is used for language models.
+                model_names = []
 
-        # Convert to model metadata format
-        return [
-            create_model_metadata(
-                provider="Ollama",
-                name=name,
-                icon="Ollama",
-                model_type=model_type if model_type == "llm" else "embeddings",
-                tool_calling=model_type == "llm",
-                default=i < MIN_DEFAULT_MODELS,  # Mark first 5 as default
-            )
-            for i, name in enumerate(model_names)
-        ]
-    except Exception:  # noqa: BLE001
-        logger.debug(f"Could not fetch live Ollama {model_type} models from {base_url}")
-        return []
+            if not model_names:
+                continue
+
+            # Convert to model metadata format
+            return [
+                create_model_metadata(
+                    provider="Ollama",
+                    name=name,
+                    icon="Ollama",
+                    model_type=model_type if model_type == "llm" else "embeddings",
+                    tool_calling=model_type == "llm",
+                    default=i < MIN_DEFAULT_MODELS,  # Mark first 5 as default
+                )
+                for i, name in enumerate(model_names)
+            ]
+        except Exception:  # noqa: BLE001
+            logger.debug(f"Could not fetch live Ollama {model_type} models from {base_url}")
+
+    return []
 
 
 def fetch_live_watsonx_models(user_id: UUID | str | None, model_type: str = "llm") -> list[dict]:
