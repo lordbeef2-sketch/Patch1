@@ -1,2 +1,5 @@
 # Patcher artifacts
 
+
+__pycache__/
+*.pyc
