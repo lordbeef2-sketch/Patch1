@@ -1,0 +1,28 @@
+{
+  "id": "owui-admin-assistant-v4",
+  "name": "OWUI Admin Assistant",
+  "base_model_id": "gpt-4.1",
+  "is_active": true,
+  "meta": {
+    "description": "Autonomous assistant for OWUI/Langflow model, tool, workflow, and knowledge-base administration.",
+    "profile_image_url": "/static/favicon.png",
+    "capabilities": {
+      "tool_use": true,
+      "code_generation": true,
+      "workflow_design": true,
+      "knowledge_rag": true,
+      "self_validation": true
+    },
+    "knowledge_bases": [
+      "Open WebUI Operations KB",
+      "Langflow Engineering KB"
+    ]
+  },
+  "params": {
+    "temperature": 0.1,
+    "top_p": 1.0,
+    "max_tokens": 4000,
+    "stream": true,
+    "deterministic_templates": true
+  }
+}
