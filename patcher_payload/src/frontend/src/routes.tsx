@@ -35,6 +35,7 @@ import ApiKeysPage from "./pages/SettingsPage/pages/ApiKeysPage";
 import GeneralPage from "./pages/SettingsPage/pages/GeneralPage";
 import GlobalVariablesPage from "./pages/SettingsPage/pages/GlobalVariablesPage";
 import HTTPSPage from "./pages/SettingsPage/pages/HTTPSPage";
+import IntegrationsPage from "./pages/SettingsPage/pages/IntegrationsPage";
 import MCPServersPage from "./pages/SettingsPage/pages/MCPServersPage";
 import ModelProvidersPage from "./pages/SettingsPage/pages/ModelProvidersPage";
 import OAuthSSOPage from "./pages/SettingsPage/pages/OAuthSSOPage";
@@ -191,6 +192,14 @@ const router = createBrowserRouter(
                     element={
                       <ProtectedAdminRoute>
                         <HTTPSPage />
+                      </ProtectedAdminRoute>
+                    }
+                  />
+                  <Route
+                    path="integrations"
+                    element={
+                      <ProtectedAdminRoute>
+                        <IntegrationsPage />
                       </ProtectedAdminRoute>
                     }
                   />

@@ -72,6 +72,16 @@ export default function SettingsPage(): JSX.Element {
         ),
       },
       {
+        title: "Integrations",
+        href: "/settings/integrations",
+        icon: (
+          <ForwardedIconComponent
+            name="Plug"
+            className="w-4 flex-shrink-0 justify-start stroke-[1.5]"
+          />
+        ),
+      },
+      {
         title: "MCP Servers",
         href: "/settings/mcp-servers",
         icon: (

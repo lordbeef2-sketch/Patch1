@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from http import HTTPStatus
 from pathlib import Path
+from typing import Any
 from typing import Annotated
+from urllib import error, parse, request
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.serialization import pkcs12
@@ -57,6 +60,64 @@ class SSOSettingsUpdateRequest(BaseModel):
     sso_enabled: bool
 
 
+class IntegrationSettingsResponse(BaseModel):
+    langflow_base_url: str
+    langflow_auth_token_configured: bool
+    langflow_timeout_seconds: int
+    langflow_retry_count: int
+    langflow_retry_backoff_seconds: int
+    langflow_default_flow_id: str | None
+    langflow_default_project_id: str | None
+    owui_base_url: str
+    owui_auth_token_configured: bool
+    owui_timeout_seconds: int
+    owui_retry_count: int
+    owui_retry_backoff_seconds: int
+    owui_failure_policy: str
+    owui_sync_enabled: bool
+    owui_sync_dry_run: bool
+    owui_sync_verbose_logs: bool
+    allowed_origins_csv: str
+    enforce_host_allowlist: bool
+    host_allowlist_csv: str
+    restart_required: bool = True
+
+
+class IntegrationSettingsUpdateRequest(BaseModel):
+    langflow_base_url: str = Field(min_length=1)
+    langflow_auth_token: str | None = Field(default=None)
+    langflow_timeout_seconds: int = Field(ge=1, le=300)
+    langflow_retry_count: int = Field(ge=0, le=10)
+    langflow_retry_backoff_seconds: int = Field(ge=0, le=60)
+    langflow_default_flow_id: str | None = Field(default=None)
+    langflow_default_project_id: str | None = Field(default=None)
+    owui_base_url: str = Field(min_length=1)
+    owui_auth_token: str | None = Field(default=None)
+    owui_timeout_seconds: int = Field(ge=1, le=300)
+    owui_retry_count: int = Field(ge=0, le=10)
+    owui_retry_backoff_seconds: int = Field(ge=0, le=60)
+    owui_failure_policy: str = Field(default="queue", min_length=1)
+    owui_sync_enabled: bool = Field(default=True)
+    owui_sync_dry_run: bool = Field(default=False)
+    owui_sync_verbose_logs: bool = Field(default=False)
+    allowed_origins_csv: str = Field(default="")
+    enforce_host_allowlist: bool = Field(default=False)
+    host_allowlist_csv: str = Field(default="127.0.0.1,localhost")
+
+
+class IntegrationConnectionCheck(BaseModel):
+    target: str
+    status: str
+    http_status: int | None = None
+    url: str
+    detail: str
+
+
+class IntegrationConnectionTestResponse(BaseModel):
+    status: str
+    checks: list[IntegrationConnectionCheck]
+
+
 def _upsert_langflow_env(updates: dict[str, str | None]) -> None:
     env_path = Path.cwd() / ".env"
     existing: dict[str, str] = {}
@@ -80,6 +141,84 @@ def _upsert_langflow_env(updates: dict[str, str | None]) -> None:
     if content:
         content += "\n"
     env_path.write_text(content, encoding="utf-8")
+
+
+def _load_langflow_env() -> dict[str, str]:
+    env_path = Path.cwd() / ".env"
+    existing: dict[str, str] = {}
+
+    if not env_path.exists():
+        return existing
+
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        existing[key.strip()] = value
+
+    return existing
+
+
+def _parse_bool(raw: str | None, default: bool = False) -> bool:
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _parse_int(raw: str | None, default: int) -> int:
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+def _normalize_url(name: str, value: str) -> str:
+    normalized = value.strip().rstrip("/")
+    parsed = parse.urlparse(normalized)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise HTTPException(status_code=400, detail=f"{name} must be a valid http(s) URL")
+    return normalized
+
+
+def _connectivity_check(target: str, base_url: str, timeout_seconds: int) -> IntegrationConnectionCheck:
+    health_paths = (
+        "/health_check",
+        "/api/v1/monitor/health",
+        "/api/v1/health",
+    )
+    for path in health_paths:
+        url = f"{base_url}{path}"
+        req = request.Request(url=url, method="GET")
+        try:
+            with request.urlopen(req, timeout=timeout_seconds) as response:  # noqa: S310
+                return IntegrationConnectionCheck(
+                    target=target,
+                    status="PASS",
+                    http_status=int(response.status),
+                    url=url,
+                    detail="Connection successful",
+                )
+        except error.HTTPError as exc:
+            if exc.code < HTTPStatus.INTERNAL_SERVER_ERROR:
+                return IntegrationConnectionCheck(
+                    target=target,
+                    status="PASS",
+                    http_status=exc.code,
+                    url=url,
+                    detail="Endpoint reachable (non-2xx response)",
+                )
+        except Exception as exc:  # noqa: BLE001
+            last_error = str(exc)
+
+    return IntegrationConnectionCheck(
+        target=target,
+        status="FAIL",
+        url=base_url,
+        detail=last_error if "last_error" in locals() else "Connection failed",
+    )
 
 
 def _get_certs_dir() -> Path:
@@ -149,6 +288,88 @@ async def get_https_settings(
         https_hsts_include_subdomains=settings.https_hsts_include_subdomains,
         https_hsts_preload=settings.https_hsts_preload,
     )
+
+
+@router.get("/integrations", response_model=IntegrationSettingsResponse)
+async def get_integration_settings(
+    current_user: Annotated[User, Depends(get_current_active_superuser)],
+):
+    _ = current_user
+    env = _load_langflow_env()
+    settings = get_settings_service().settings
+
+    default_langflow_url = f"http://{settings.host}:{settings.port}"
+    return IntegrationSettingsResponse(
+        langflow_base_url=env.get("LANGFLOW_PUBLIC_BASE_URL", default_langflow_url),
+        langflow_auth_token_configured=bool(env.get("LANGFLOW_API_TOKEN")),
+        langflow_timeout_seconds=_parse_int(env.get("LANGFLOW_REQUEST_TIMEOUT_SECONDS"), 30),
+        langflow_retry_count=_parse_int(env.get("LANGFLOW_RETRY_COUNT"), 2),
+        langflow_retry_backoff_seconds=_parse_int(env.get("LANGFLOW_RETRY_BACKOFF_SECONDS"), 1),
+        langflow_default_flow_id=env.get("LANGFLOW_DEFAULT_FLOW_ID"),
+        langflow_default_project_id=env.get("LANGFLOW_DEFAULT_PROJECT_ID"),
+        owui_base_url=env.get("OWUI_BASE_URL", "http://127.0.0.1:8081"),
+        owui_auth_token_configured=bool(env.get("OWUI_API_TOKEN")),
+        owui_timeout_seconds=_parse_int(env.get("OWUI_TIMEOUT_SECONDS"), 30),
+        owui_retry_count=_parse_int(env.get("OWUI_RETRY_COUNT"), 2),
+        owui_retry_backoff_seconds=_parse_int(env.get("OWUI_RETRY_BACKOFF_SECONDS"), 1),
+        owui_failure_policy=env.get("OWUI_FAILURE_POLICY", "queue"),
+        owui_sync_enabled=_parse_bool(env.get("OWUI_SYNC_ENABLED"), True),
+        owui_sync_dry_run=_parse_bool(env.get("OWUI_SYNC_DRY_RUN"), False),
+        owui_sync_verbose_logs=_parse_bool(env.get("OWUI_SYNC_VERBOSE_LOGS"), False),
+        allowed_origins_csv=env.get("INTEGRATION_ALLOWED_ORIGINS", ""),
+        enforce_host_allowlist=_parse_bool(env.get("INTEGRATION_ENFORCE_HOST_ALLOWLIST"), False),
+        host_allowlist_csv=env.get("INTEGRATION_HOST_ALLOWLIST", "127.0.0.1,localhost"),
+    )
+
+
+@router.put("/integrations", response_model=IntegrationSettingsResponse)
+async def update_integration_settings(
+    payload: IntegrationSettingsUpdateRequest,
+    current_user: Annotated[User, Depends(get_current_active_superuser)],
+):
+    _ = current_user
+    langflow_base_url = _normalize_url("langflow_base_url", payload.langflow_base_url)
+    owui_base_url = _normalize_url("owui_base_url", payload.owui_base_url)
+
+    _upsert_langflow_env(
+        {
+            "LANGFLOW_PUBLIC_BASE_URL": langflow_base_url,
+            "LANGFLOW_API_TOKEN": payload.langflow_auth_token,
+            "LANGFLOW_REQUEST_TIMEOUT_SECONDS": str(payload.langflow_timeout_seconds),
+            "LANGFLOW_RETRY_COUNT": str(payload.langflow_retry_count),
+            "LANGFLOW_RETRY_BACKOFF_SECONDS": str(payload.langflow_retry_backoff_seconds),
+            "LANGFLOW_DEFAULT_FLOW_ID": payload.langflow_default_flow_id,
+            "LANGFLOW_DEFAULT_PROJECT_ID": payload.langflow_default_project_id,
+            "OWUI_BASE_URL": owui_base_url,
+            "OWUI_API_TOKEN": payload.owui_auth_token,
+            "OWUI_TIMEOUT_SECONDS": str(payload.owui_timeout_seconds),
+            "OWUI_RETRY_COUNT": str(payload.owui_retry_count),
+            "OWUI_RETRY_BACKOFF_SECONDS": str(payload.owui_retry_backoff_seconds),
+            "OWUI_FAILURE_POLICY": payload.owui_failure_policy,
+            "OWUI_SYNC_ENABLED": str(payload.owui_sync_enabled).lower(),
+            "OWUI_SYNC_DRY_RUN": str(payload.owui_sync_dry_run).lower(),
+            "OWUI_SYNC_VERBOSE_LOGS": str(payload.owui_sync_verbose_logs).lower(),
+            "INTEGRATION_ALLOWED_ORIGINS": payload.allowed_origins_csv,
+            "INTEGRATION_ENFORCE_HOST_ALLOWLIST": str(payload.enforce_host_allowlist).lower(),
+            "INTEGRATION_HOST_ALLOWLIST": payload.host_allowlist_csv,
+        }
+    )
+
+    return await get_integration_settings(current_user)
+
+
+@router.post("/integrations/test", response_model=IntegrationConnectionTestResponse)
+async def test_integration_settings(
+    current_user: Annotated[User, Depends(get_current_active_superuser)],
+):
+    _ = current_user
+    settings = await get_integration_settings(current_user)
+    checks = [
+        _connectivity_check("langflow", settings.langflow_base_url, settings.langflow_timeout_seconds),
+        _connectivity_check("owui", settings.owui_base_url, settings.owui_timeout_seconds),
+    ]
+    status = "PASS" if all(check.status == "PASS" for check in checks) else "FAIL"
+    return IntegrationConnectionTestResponse(status=status, checks=checks)
 
 
 @router.put("/https", response_model=HTTPSSettingsResponse)
