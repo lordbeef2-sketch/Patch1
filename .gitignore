@@ -1,6 +1,0 @@
-# Patcher artifacts
-
-
-__pycache__/
-*.pyc
-.patcher-paths.json

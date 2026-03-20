@@ -7,10 +7,11 @@ function Ok([string]$msg) { Write-Host "[patcher] $msg" -ForegroundColor Green }
 function Warn([string]$msg) { Write-Host "[patcher] $msg" -ForegroundColor Yellow }
 function Fail([string]$msg) { Write-Host "[patcher] $msg" -ForegroundColor Red; exit 1 }
 
-$Root = Split-Path -Parent $MyInvocation.MyCommand.Path
+$PatcherRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$Root = Split-Path -Parent $PatcherRoot
 Set-Location $Root
 
-$payloadRoot = Join-Path $Root "patcher_payload"
+$payloadRoot = Join-Path $PatcherRoot "payload"
 if (-not (Test-Path $payloadRoot)) {
   Fail "Missing payload directory: $payloadRoot"
 }
