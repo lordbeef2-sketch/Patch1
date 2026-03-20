@@ -15,6 +15,35 @@
 
 [Langflow](https://langflow.org) is a powerful platform for building and deploying AI-powered agents and workflows. It provides developers with both a visual authoring experience and built-in API and MCP servers that turn every workflow into a tool that can be integrated into applications built on any framework or stack. Langflow comes with batteries included and supports all major LLMs, vector databases and a growing library of AI tools.
 
+## Patch1 Helper Scripts (Windows)
+
+To simplify local Open WebUI + Langflow operations, this repo includes helper scripts that let you choose root folders once and then start each service with the correct environment.
+
+1. Configure roots (one time):
+
+```powershell
+.\configure_paths.ps1
+```
+
+2. Start Langflow using its `.venv` environment:
+
+```powershell
+.\start_langflow.ps1
+```
+
+3. Start Open WebUI using its `env` environment:
+
+```powershell
+.\start_openwebui.ps1
+```
+
+Validation mode (no server start):
+
+```powershell
+.\start_langflow.ps1 -ValidateOnly
+.\start_openwebui.ps1 -ValidateOnly
+```
+
 ## ✨ Highlight features
 
 - **Visual builder interface** to quickly get started and iterate.
