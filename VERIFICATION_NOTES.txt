@@ -7,3 +7,14 @@ Verification notes:
   - Langflow installer paths are internally consistent for patcher one level below root.
   - OWUI wrappers now align with the moved Python patcher under tools/.
 - Not runtime-tested against a live Langflow/OWUI install in this environment.
+
+
+Langflow fix applied:
+- The original Patch1 payload contains 53 files, but the original Langflow patcher restore list only restored 48.
+- Missing restore-list entries added:
+  - src/frontend/src/controllers/API/queries/auth/use-get-integration-settings.ts
+  - src/frontend/src/controllers/API/queries/auth/use-post-integration-test.ts
+  - src/frontend/src/controllers/API/queries/auth/use-put-integration-settings.ts
+  - src/frontend/src/pages/SettingsPage/pages/IntegrationsPage/index.tsx
+  - src/frontend/src/utils/styleUtils.ts
+- This specifically fixes the auth/index.ts validation failure shown during install.

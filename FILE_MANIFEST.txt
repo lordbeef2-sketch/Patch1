@@ -1,5 +1,6 @@
 FILE_MANIFEST.txt
 README.md
+VERIFICATION_NOTES.txt
 langflow/patcher/README.md
 langflow/patcher/install.bat
 langflow/patcher/install.ps1
