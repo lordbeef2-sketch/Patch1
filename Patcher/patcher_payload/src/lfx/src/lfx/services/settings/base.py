@@ -189,6 +189,17 @@ class Settings(BaseSettings):
     redis_db: int = 0
     redis_url: str | None = None
     redis_cache_expire: int = 3600
+    job_queue_type: Literal["memory", "redis"] = "memory"
+    redis_queue_host: str | None = None
+    redis_queue_port: int | None = None
+    redis_queue_db: int = 1
+    redis_queue_url: str | None = None
+    redis_queue_ttl: int = 3600
+    redis_queue_startup_grace_s: float = 30.0
+    redis_queue_cancel_marker_ttl: int = 60
+    redis_queue_cancel_channel_enabled: bool = True
+    redis_queue_polling_stale_threshold_s: float = 90.0
+    redis_queue_polling_watchdog_interval_s: float = 15.0
 
     # Sentry
     sentry_dsn: str | None = None
