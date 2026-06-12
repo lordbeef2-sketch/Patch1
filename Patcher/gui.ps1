@@ -41,6 +41,36 @@ function Get-ConfigValue($Config, [string]$Name) {
   return $property.Value
 }
 
+function Get-DefaultLangflowRoot([string]$PatcherRoot) {
+  $leaf = Split-Path -Leaf $PatcherRoot
+  if ($leaf -ieq "patcher") {
+    return (Split-Path -Parent $PatcherRoot)
+  }
+  return $PatcherRoot
+}
+
+function Test-SamePath([string]$Left, [string]$Right) {
+  if ([string]::IsNullOrWhiteSpace($Left) -or [string]::IsNullOrWhiteSpace($Right)) {
+    return $false
+  }
+
+  $leftFull = [System.IO.Path]::GetFullPath($Left).TrimEnd('\', '/')
+  $rightFull = [System.IO.Path]::GetFullPath($Right).TrimEnd('\', '/')
+  return $leftFull.Equals($rightFull, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Get-SavedLangflowRoot($Config, [string]$PatcherRoot) {
+  $defaultRoot = Get-DefaultLangflowRoot -PatcherRoot $PatcherRoot
+  $savedRoot = Get-ConfigValue -Config $Config -Name 'langflow_target'
+  if ([string]::IsNullOrWhiteSpace([string]$savedRoot)) {
+    return $defaultRoot
+  }
+  if (Test-SamePath -Left ([string]$savedRoot) -Right $PatcherRoot) {
+    return $defaultRoot
+  }
+  return [string]$savedRoot
+}
+
 function Quote-Arg([string]$Value) {
   if ($null -eq $Value) {
     return "''"
@@ -50,7 +80,7 @@ function Quote-Arg([string]$Value) {
 
 function Select-Folder([string]$InitialDirectory) {
   $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
-  $dialog.Description = 'Select the LangPatcher install root'
+  $dialog.Description = 'Select the Langflow target folder'
   $dialog.ShowNewFolderButton = $true
   if (-not [string]::IsNullOrWhiteSpace($InitialDirectory) -and (Test-Path $InitialDirectory)) {
     $dialog.SelectedPath = (Resolve-Path -LiteralPath $InitialDirectory).Path
@@ -78,7 +108,7 @@ $header.Location = New-Object System.Drawing.Point(18, 16)
 $form.Controls.Add($header)
 
 $sub = New-Object System.Windows.Forms.Label
-$sub.Text = 'Install Langflow into this folder, apply the patch, or launch the patched server from one place.'
+$sub.Text = 'Install Langflow into the selected target folder, apply the patch, or launch the patched server from one place.'
 $sub.AutoSize = $true
 $sub.Location = New-Object System.Drawing.Point(20, 50)
 $form.Controls.Add($sub)
@@ -109,14 +139,14 @@ function Add-Row([int]$Row, [string]$LabelText, [System.Windows.Forms.Control]$C
 }
 
 $installRoot = New-Object System.Windows.Forms.TextBox
-$installRoot.Text = if (Get-ConfigValue -Config $saved -Name 'langflow_target') { [string](Get-ConfigValue -Config $saved -Name 'langflow_target') } else { $PatcherRoot }
+$installRoot.Text = Get-SavedLangflowRoot -Config $saved -PatcherRoot $PatcherRoot
 $browseRoot = New-Object System.Windows.Forms.Button
 $browseRoot.Text = 'Browse'
 $browseRoot.Add_Click({
   $selected = Select-Folder -InitialDirectory $installRoot.Text
   if ($selected) { $installRoot.Text = $selected }
 })
-Add-Row -Row 0 -LabelText 'Install root' -Control $installRoot -Button $browseRoot
+Add-Row -Row 0 -LabelText 'Langflow target' -Control $installRoot -Button $browseRoot
 
 $hostBox = New-Object System.Windows.Forms.TextBox
 $hostBox.Text = if (Get-ConfigValue -Config $saved -Name 'host') { [string](Get-ConfigValue -Config $saved -Name 'host') } else { '127.0.0.1' }
@@ -265,5 +295,5 @@ $launchButton.Add_Click({
   Start-PatcherProcess -ScriptPath (Join-Path $PatcherRoot 'launcher.ps1') -Arguments $args -Label 'Launch'
 })
 
-Append-Log 'Ready. Install creates .venv and installs Langflow into this folder; Patch applies the LangPatcher payload; Launch starts Langflow from the local .venv.'
+Append-Log 'Ready. Install creates .venv in the Langflow target folder; Patch applies the LangPatcher payload; Launch starts Langflow from that target .venv.'
 [void]$form.ShowDialog()

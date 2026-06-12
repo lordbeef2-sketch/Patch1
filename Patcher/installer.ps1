@@ -40,6 +40,19 @@ function Load-PatcherConfig([string]$Root) {
   }
 }
 
+function Get-ConfigValue($Config, [string]$Name) {
+  if ($null -eq $Config) {
+    return $null
+  }
+
+  $property = $Config.PSObject.Properties[$Name]
+  if ($null -eq $property) {
+    return $null
+  }
+
+  return $property.Value
+}
+
 function Save-PatcherConfig([string]$Root, [hashtable]$Updates) {
   $configPath = Get-PatcherConfigPath -Root $Root
   $merged = [ordered]@{}
@@ -61,6 +74,49 @@ function Save-PatcherConfig([string]$Root, [hashtable]$Updates) {
   $merged["updated_at"] = (Get-Date).ToString("o")
   $merged | ConvertTo-Json | Set-Content -Path $configPath -Encoding UTF8
   return $configPath
+}
+
+function Get-DefaultLangflowRoot([string]$PatcherRoot) {
+  $leaf = Split-Path -Leaf $PatcherRoot
+  if ($leaf -ieq "patcher") {
+    return (Split-Path -Parent $PatcherRoot)
+  }
+  return $PatcherRoot
+}
+
+function Test-SamePath([string]$Left, [string]$Right) {
+  if ([string]::IsNullOrWhiteSpace($Left) -or [string]::IsNullOrWhiteSpace($Right)) {
+    return $false
+  }
+
+  $leftFull = [System.IO.Path]::GetFullPath($Left).TrimEnd('\', '/')
+  $rightFull = [System.IO.Path]::GetFullPath($Right).TrimEnd('\', '/')
+  return $leftFull.Equals($rightFull, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Resolve-RequestedLangflowRoot([string]$RequestedRoot, [string]$SavedRoot, [string]$PatcherRoot) {
+  $defaultRoot = Get-DefaultLangflowRoot -PatcherRoot $PatcherRoot
+  $candidate = $RequestedRoot
+
+  if ([string]::IsNullOrWhiteSpace($candidate) -and -not [string]::IsNullOrWhiteSpace($SavedRoot)) {
+    $candidate = $SavedRoot
+  }
+
+  if (-not [string]::IsNullOrWhiteSpace($candidate)) {
+    $expanded = [Environment]::ExpandEnvironmentVariables($candidate.Trim())
+    if (-not [System.IO.Path]::IsPathRooted($expanded)) {
+      $expanded = Join-Path (Get-Location).Path $expanded
+    }
+
+    if (Test-SamePath -Left $expanded -Right $PatcherRoot) {
+      Warn ("Langflow target points at the patcher folder ({0}); using parent folder instead: {1}" -f $PatcherRoot, $defaultRoot)
+      return $defaultRoot
+    }
+
+    return $candidate
+  }
+
+  return $defaultRoot
 }
 
 function Resolve-InstallRoot([string]$RequestedRoot, [string]$DefaultRoot) {
@@ -304,7 +360,7 @@ function Ensure-LocalLangflowEnvironment([string]$Root, [string]$RequestedPython
 
   if ([string]::IsNullOrWhiteSpace($venvPython)) {
     Info ("Creating folder-local Python environment at {0} with Python 3.11" -f $venvPath)
-    $venvArgs = @("venv", $venvPath, "--python")
+    $venvArgs = @("--native-tls", "venv", $venvPath, "--python")
     if ([string]::IsNullOrWhiteSpace($RequestedPython)) {
       $venvArgs += "3.11"
     } else {
@@ -329,7 +385,7 @@ function Ensure-LocalLangflowEnvironment([string]$Root, [string]$RequestedPython
   }
 
   Info "Installing Langflow into the local environment"
-  & $uvPath pip install --python $venvPython langflow -U
+  & $uvPath --native-tls pip install --python $venvPython langflow -U
   if ($LASTEXITCODE -ne 0) {
     Fail "Langflow installation failed."
   }
@@ -420,7 +476,11 @@ function Ensure-EnvSetting([string]$envFile, [string]$key, [string]$value) {
 }
 
 $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$Root = Resolve-InstallRoot -RequestedRoot $InstallRoot -DefaultRoot $ScriptRoot
+$ConfigRoot = $ScriptRoot
+$SavedConfig = Load-PatcherConfig -Root $ConfigRoot
+$SavedLangflowTarget = Get-ConfigValue -Config $SavedConfig -Name "langflow_target"
+$ResolvedRequestedRoot = Resolve-RequestedLangflowRoot -RequestedRoot $InstallRoot -SavedRoot $SavedLangflowTarget -PatcherRoot $ScriptRoot
+$Root = Resolve-InstallRoot -RequestedRoot $ResolvedRequestedRoot -DefaultRoot (Get-DefaultLangflowRoot -PatcherRoot $ScriptRoot)
 $PayloadRoot = Join-Path $ScriptRoot "patcher_payload"
 $BackendPayloadRoot = Join-Path $PayloadRoot "src\backend\base\langflow"
 $LfxPayloadRoot = Join-Path $PayloadRoot "src\lfx\src\lfx"
@@ -438,7 +498,8 @@ $localPython = Get-LocalVenvPython -Root $Root
 
 if ($ValidateOnly) {
   Write-Host "VALIDATION_OK"
-  Write-Host ("Install root: {0}" -f $Root)
+  Write-Host ("Patcher root: {0}" -f $ConfigRoot)
+  Write-Host ("Langflow target: {0}" -f $Root)
   Write-Host ("Local Python: {0}" -f $(if ($localPython) { $localPython } else { "<missing>" }))
   Write-Host ("Langflow installed: {0}" -f $(if ($localPython -and (Test-LangflowInstalled -PythonPath $localPython)) { "yes" } else { "no" }))
   exit 0
@@ -456,7 +517,7 @@ if ($PatchOnly) {
 Use-PythonRuntimePath -PythonPath $PythonPath
 
 if ($InstallOnly) {
-  Save-PatcherConfig -Root $Root -Updates @{
+  Save-PatcherConfig -Root $ConfigRoot -Updates @{
     langflow_target = $Root
     python_exe = $PythonPath
   } | Out-Null
@@ -523,7 +584,7 @@ Write-InstallState `
   -payloadFingerprint $PayloadFingerprint `
   -installerFingerprint $InstallerFingerprint
 
-$configPath = Save-PatcherConfig -Root $Root -Updates @{
+$configPath = Save-PatcherConfig -Root $ConfigRoot -Updates @{
   langflow_target = $Root
   python_exe = $PythonPath
 }
