@@ -161,6 +161,14 @@ class Settings(BaseSettings):
 
     disable_track_apikey_usage: bool = False
     remove_api_keys: bool = False
+    rate_limit_enabled: bool = True
+    """Enable rate limiting for the login endpoint. Set to False to disable it."""
+    rate_limit_per_minute: int = 5
+    """Number of login attempts allowed per minute per IP address."""
+    rate_limit_storage_uri: str = "memory://"
+    """Storage backend for rate limiting, such as memory:// or redis://host:port."""
+    rate_limit_trust_proxy: bool = False
+    """Trust X-Forwarded-For when Langflow is behind a trusted reverse proxy."""
     allow_custom_components: bool = True
     """If set to False, arbitrary custom component code is blocked unless it matches an approved template hash."""
     components_path: list[str] = []
