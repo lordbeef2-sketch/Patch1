@@ -541,6 +541,34 @@ def create_app():
     # Discover and register additional routers from plugins (langflow.plugins entry-point)
     load_plugin_routes(app)
 
+    # Langflow 1.10 login checks app.state.limiter directly.
+    from slowapi.errors import RateLimitExceeded
+
+    @app.exception_handler(RateLimitExceeded)
+    async def rate_limit_exception_handler(request: Request, _exc: RateLimitExceeded):
+        """Handle rate limit exceeded errors with structured logging."""
+        from langflow.services.rate_limit.service import get_limiter_key
+
+        retry_after_seconds = "60"
+        client_ip = get_limiter_key(request)
+        logger.warning(
+            "Rate limit exceeded",
+            auth_event="rate_limit_exceeded",
+            client_ip=client_ip,
+            path=request.url.path,
+            method=request.method,
+        )
+        return JSONResponse(
+            status_code=HTTPStatus.TOO_MANY_REQUESTS,
+            content={
+                "detail": "Too many requests. Please try again later.",
+                "retry_after": retry_after_seconds,
+            },
+            headers={
+                "Retry-After": retry_after_seconds,
+            },
+        )
+
     @app.exception_handler(Exception)
     async def exception_handler(_request: Request, exc: Exception):
         if isinstance(exc, HTTPException):
@@ -561,6 +589,10 @@ def create_app():
     FastAPIInstrumentor.instrument_app(app)
 
     add_pagination(app)
+
+    from langflow.services.rate_limit import get_rate_limiter
+
+    app.state.limiter = get_rate_limiter()
 
     return app
 
