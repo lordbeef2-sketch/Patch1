@@ -573,6 +573,10 @@ Info "Ensuring LANGFLOW_AUTO_LOGIN=false in $EnvFile"
 Ensure-EnvSetting -envFile $EnvFile -key "LANGFLOW_AUTO_LOGIN" -value "false"
 Ok "Configured .env with LANGFLOW_AUTO_LOGIN=false"
 
+Info "Ensuring LANGPATCHER_LOCAL_ONLY=true in $EnvFile"
+Ensure-EnvSetting -envFile $EnvFile -key "LANGPATCHER_LOCAL_ONLY" -value "true"
+Ok "Configured .env with LANGPATCHER_LOCAL_ONLY=true"
+
 Write-InstallState `
   -path $StateFile `
   -installRoot $Root `
