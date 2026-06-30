@@ -6,16 +6,13 @@ from lfx.components._importing import import_mod
 
 if TYPE_CHECKING:
     from .local_db import LocalDBComponent
-    from .local_path_vector_db import LocalPathVectorDBComponent
 
 _dynamic_imports = {
     "LocalDBComponent": "local_db",
-    "LocalPathVectorDBComponent": "local_path_vector_db",
 }
 
 __all__ = [
     "LocalDBComponent",
-    "LocalPathVectorDBComponent",
 ]
 
 

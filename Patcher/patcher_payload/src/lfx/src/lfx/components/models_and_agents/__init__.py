@@ -10,7 +10,6 @@ if TYPE_CHECKING:
     from lfx.components.models_and_agents.language_model import LanguageModelComponent
     from lfx.components.models_and_agents.mcp_component import MCPToolsComponent
     from lfx.components.models_and_agents.memory import MemoryComponent
-    from lfx.components.models_and_agents.owui_models_agents import OWUIModelsAgentsComponent
     from lfx.components.models_and_agents.policies_component import PoliciesComponent
     from lfx.components.models_and_agents.prompt import PromptComponent
 
@@ -20,7 +19,6 @@ _dynamic_imports = {
     "LanguageModelComponent": "language_model",
     "MCPToolsComponent": "mcp_component",
     "MemoryComponent": "memory",
-    "OWUIModelsAgentsComponent": "owui_models_agents",
     "PromptComponent": "prompt",
     "PoliciesComponent": "policies_component",
 }
@@ -31,7 +29,6 @@ __all__ = [
     "LanguageModelComponent",
     "MCPToolsComponent",
     "MemoryComponent",
-    "OWUIModelsAgentsComponent",
     "PoliciesComponent",
     "PromptComponent",
 ]
