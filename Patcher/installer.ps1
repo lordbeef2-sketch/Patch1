@@ -564,6 +564,20 @@ Info "Applying LFX patch files to $LfxRoot"
 $lfxCopied = Copy-Tree -sourceRoot $LfxPayloadRoot -destinationRoot $LfxRoot
 Ok "Copied $lfxCopied LFX files"
 
+$staleLfxFiles = @(
+  "components\models_and_agents\owui_models_agents.py",
+  "components\vectorstores\local_path_vector_db.py"
+)
+
+foreach ($relativeStaleFile in $staleLfxFiles) {
+  $stalePath = Join-Path $LfxRoot $relativeStaleFile
+  Assert-PathWithinRoot -path $stalePath -root $LfxRoot
+  if (Test-Path -LiteralPath $stalePath) {
+    Remove-Item -LiteralPath $stalePath -Force
+    Ok ("Removed stale experimental node file: {0}" -f $relativeStaleFile)
+  }
+}
+
 $InstalledFrontendRoot = Join-Path $LangflowRoot "frontend"
 Info "Replacing built frontend assets in $InstalledFrontendRoot"
 $frontendFiles = Install-FrontendBundle -bundlePath $FrontendBundlePath -destinationRoot $InstalledFrontendRoot
