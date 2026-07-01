@@ -166,7 +166,17 @@ print(json.dumps(paths))
     return
   }
 
-  $existing = @($env:PATH -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+  $existing = @($env:PATH -split ';' | Where-Object {
+      if ([string]::IsNullOrWhiteSpace($_)) {
+        return $false
+      }
+      $normalized = ([string]$_).TrimEnd('\', '/')
+      $isGitOpenSslPath = $normalized.EndsWith("\Git\mingw64\bin", [System.StringComparison]::OrdinalIgnoreCase) -or $normalized.EndsWith("\Git\usr\bin", [System.StringComparison]::OrdinalIgnoreCase)
+      if ($isGitOpenSslPath -and ((Test-Path (Join-Path $normalized "libcrypto-3-x64.dll")) -or (Test-Path (Join-Path $normalized "openssl.exe")))) {
+        return $false
+      }
+      return $true
+    })
   $ordered = [System.Collections.Generic.List[string]]::new()
   foreach ($path in @($paths)) {
     if (-not [string]::IsNullOrWhiteSpace([string]$path) -and (Test-Path ([string]$path))) {

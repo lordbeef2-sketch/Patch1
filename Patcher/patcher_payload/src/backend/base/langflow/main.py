@@ -67,8 +67,28 @@ _tasks: list[asyncio.Task] = []
 MAX_PORT = 65535
 
 
+def _langpatcher_local_only() -> bool:
+    return os.getenv("LANGPATCHER_LOCAL_ONLY", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+class _LangPatcherNoOpTelemetryService:
+    def start(self) -> None:
+        return None
+
+    async def log_exception(self, *_args, **_kwargs) -> None:
+        return None
+
+    def __getattr__(self, _name: str):
+        async def _async_noop(*_args, **_kwargs):
+            return None
+
+        return _async_noop
+
+
 async def log_exception_to_telemetry(exc: Exception, context: str) -> None:
     """Helper to safely log exceptions to telemetry without raising."""
+    if _langpatcher_local_only():
+        return
     try:
         telemetry_service = get_telemetry_service()
         await telemetry_service.log_exception(exc, context)
@@ -146,7 +166,7 @@ def warn_about_future_cors_changes(settings):
 
 def get_lifespan(*, fix_migration=False, version=None):
     initialize_settings_service()
-    telemetry_service = get_telemetry_service()
+    telemetry_service = _LangPatcherNoOpTelemetryService() if _langpatcher_local_only() else get_telemetry_service()
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -586,7 +606,10 @@ def create_app():
             content={"message": str(exc)},
         )
 
-    FastAPIInstrumentor.instrument_app(app)
+    if os.getenv("LANGPATCHER_LOCAL_ONLY", "").strip().lower() not in {"1", "true", "yes", "on"}:
+        FastAPIInstrumentor.instrument_app(app)
+    else:
+        logger.debug("Skipping FastAPI OpenTelemetry instrumentation in LangPatcher local-only mode")
 
     add_pagination(app)
 

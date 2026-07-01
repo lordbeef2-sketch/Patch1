@@ -281,7 +281,17 @@ print(json.dumps(paths))
     return
   }
 
-  $existing = @($env:PATH -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+  $existing = @($env:PATH -split ';' | Where-Object {
+      if ([string]::IsNullOrWhiteSpace($_)) {
+        return $false
+      }
+      $normalized = ([string]$_).TrimEnd('\', '/')
+      $isGitOpenSslPath = $normalized.EndsWith("\Git\mingw64\bin", [System.StringComparison]::OrdinalIgnoreCase) -or $normalized.EndsWith("\Git\usr\bin", [System.StringComparison]::OrdinalIgnoreCase)
+      if ($isGitOpenSslPath -and ((Test-Path (Join-Path $normalized "libcrypto-3-x64.dll")) -or (Test-Path (Join-Path $normalized "openssl.exe")))) {
+        return $false
+      }
+      return $true
+    })
   $ordered = [System.Collections.Generic.List[string]]::new()
   foreach ($path in @($paths)) {
     if (-not [string]::IsNullOrWhiteSpace([string]$path) -and (Test-Path ([string]$path))) {
@@ -311,6 +321,15 @@ function Get-PythonVersion([string]$PythonPath) {
   }
 
   return ([string]::Join("`n", @($pythonVersionOutput))).Trim()
+}
+
+function Ensure-CompatibleRuntimePackages([string]$PythonPath) {
+  $uvPath = Resolve-UvCommand
+  Info "Ensuring Windows-compatible aiohttp runtime"
+  & $uvPath --native-tls pip install --python $PythonPath "aiohttp==3.9.5"
+  if ($LASTEXITCODE -ne 0) {
+    Fail "Failed to install Windows-compatible aiohttp runtime package."
+  }
 }
 
 function Get-InstalledPackageLayout([string]$PythonPath) {
@@ -475,6 +494,44 @@ function Ensure-EnvSetting([string]$envFile, [string]$key, [string]$value) {
   Set-Content -Path $envFile -Value ($line + "`r`n") -NoNewline
 }
 
+function Patch-LangflowCliLocalOnlyVersionCheck([string]$LangflowRoot) {
+  $mainPath = Join-Path $LangflowRoot "__main__.py"
+  if (-not (Test-Path -LiteralPath $mainPath)) {
+    Warn "Unable to patch Langflow CLI version check; __main__.py was not found."
+    return
+  }
+
+  Assert-PathWithinRoot -path $mainPath -root $LangflowRoot
+  $content = Get-Content -LiteralPath $mainPath -Raw
+  $guard = '    if os.getenv("LANGPATCHER_LOCAL_ONLY", "").strip().lower() in {"1", "true", "yes", "on"}:'
+  if ($content.Contains($guard)) {
+    return
+  }
+
+  $needle = @'
+    Example:
+        >>> build_version_notice("1.0.0", "langflow")
+        'A new version of langflow is available: 1.1.0'
+    """
+'@
+  $replacement = @'
+    Example:
+        >>> build_version_notice("1.0.0", "langflow")
+        'A new version of langflow is available: 1.1.0'
+    """
+    if os.getenv("LANGPATCHER_LOCAL_ONLY", "").strip().lower() in {"1", "true", "yes", "on"}:
+        return ""
+'@
+  if (-not $content.Contains($needle)) {
+    Warn "Unable to patch Langflow CLI version check; expected marker was not found."
+    return
+  }
+
+  $content = $content.Replace($needle, $replacement)
+  Set-Content -LiteralPath $mainPath -Value $content -NoNewline
+  Ok "Patched Langflow CLI version check for local-only mode"
+}
+
 $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ConfigRoot = $ScriptRoot
 $SavedConfig = Load-PatcherConfig -Root $ConfigRoot
@@ -515,6 +572,7 @@ if ($PatchOnly) {
 }
 
 Use-PythonRuntimePath -PythonPath $PythonPath
+Ensure-CompatibleRuntimePackages -PythonPath $PythonPath
 
 if ($InstallOnly) {
   Save-PatcherConfig -Root $ConfigRoot -Updates @{
@@ -559,6 +617,7 @@ if ($HasMatchingPatchedInstall) {
 Info "Applying backend patch files to $LangflowRoot"
 $backendCopied = Copy-Tree -sourceRoot $BackendPayloadRoot -destinationRoot $LangflowRoot
 Ok "Copied $backendCopied backend files"
+Patch-LangflowCliLocalOnlyVersionCheck -LangflowRoot $LangflowRoot
 
 Info "Applying LFX patch files to $LfxRoot"
 $lfxCopied = Copy-Tree -sourceRoot $LfxPayloadRoot -destinationRoot $LfxRoot
